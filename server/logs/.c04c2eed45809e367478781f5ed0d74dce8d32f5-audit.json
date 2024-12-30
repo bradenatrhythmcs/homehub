@@ -1,0 +1,25 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/braden/Desktop/homehub/server/logs/.c04c2eed45809e367478781f5ed0d74dce8d32f5-audit.json",
+    "files": [
+        {
+            "date": 1735316602856,
+            "name": "/Users/braden/Desktop/homehub/server/logs/error-2024-12-27.log",
+            "hash": "470a49e24559122f1774205dcdfada65e3f09c17901c74dea72c7f90cf80a347"
+        },
+        {
+            "date": 1735414838813,
+            "name": "/Users/braden/Desktop/homehub/server/logs/error-2024-12-28.log",
+            "hash": "aacebfccac245e87c54a4eae69b15340825e0de525a939635e98d9b66062f663"
+        },
+        {
+            "date": 1735448578738,
+            "name": "/Users/braden/Desktop/homehub/server/logs/error-2024-12-29.log",
+            "hash": "c861b7ca79cef65026c811fc17f4c786a8b25893d00b93dcaffe976b061ac3bf"
+        }
+    ],
+    "hashType": "sha256"
+}
