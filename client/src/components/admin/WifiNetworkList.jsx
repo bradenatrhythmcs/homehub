@@ -4,7 +4,26 @@ import { WifiIcon } from '@heroicons/react/24/outline';
 
 const WifiNetworkList = ({ networks, onDelete }) => {
     const generateWifiQR = (network) => {
-        return `WIFI:S:${network.ssid};T:${network.encryptionType};P:${network.password};;`;
+        // Handle different security types appropriately
+        let securityType = network.encryptionType?.toUpperCase() || 'WPA';
+        
+        // Map security types to QR code format
+        const securityMap = {
+            'WPA3': 'WPA3',
+            'WPA3-SAE': 'SAE',
+            'WPA2': 'WPA2',
+            'WPA': 'WPA',
+            'WEP': 'WEP',
+            'NONE': 'nopass'
+        };
+
+        const mappedType = securityMap[securityType] || securityType;
+        
+        // Escape special characters in SSID and password
+        const escapedSsid = network.ssid.replace(/[;:,\\]/g, '\\$&');
+        const escapedPassword = network.password.replace(/[;:,\\]/g, '\\$&');
+        
+        return `WIFI:T:${mappedType};S:${escapedSsid};P:${escapedPassword};;`;
     };
 
     return (
