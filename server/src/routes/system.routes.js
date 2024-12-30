@@ -3,6 +3,11 @@ const router = express.Router();
 const { exec } = require('child_process');
 const path = require('path');
 const { authenticateToken, adminRequired } = require('../middleware/auth');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
+
+// Track server start time
+const SERVER_START_TIME = Date.now();
 
 // Helper function to execute scripts
 const executeScript = (scriptPath, args = []) => {
@@ -35,6 +40,17 @@ const executeScript = (scriptPath, args = []) => {
             });
         });
     });
+};
+
+// Get current git version
+const getGitVersion = async () => {
+    try {
+        const { stdout } = await execAsync('git describe --tags --abbrev=0 || git rev-parse --short HEAD');
+        return stdout.trim();
+    } catch (error) {
+        console.error('Error getting git version:', error);
+        return null;
+    }
 };
 
 // Apply authentication and admin check to all routes
@@ -133,12 +149,17 @@ router.get('/vitals', async (req, res) => {
             console.log('Database file not found:', dbPath);
         }
 
+        // Get git version
+        const version = await getGitVersion();
+
         // Calculate CPU load
         const cpus = os.cpus();
         const loadAvg = os.loadavg();
         const totalMem = os.totalmem();
         const freeMem = os.freemem();
-        const uptime = os.uptime();
+        
+        // Calculate server uptime in seconds
+        const uptime = Math.floor((Date.now() - SERVER_START_TIME) / 1000);
 
         res.json({
             cpu: {
@@ -163,7 +184,8 @@ router.get('/vitals', async (req, res) => {
                 exists: dbExists,
                 size: dbSize,
                 path: dbPath
-            }
+            },
+            version: version
         });
     } catch (error) {
         console.error('Error getting system vitals:', error);

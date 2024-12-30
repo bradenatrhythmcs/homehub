@@ -41,14 +41,18 @@ const SystemVitals = () => {
     }
 
     const formatUptime = (seconds) => {
+        if (!seconds || isNaN(seconds)) return 'Just started';
+        
         const days = Math.floor(seconds / (24 * 60 * 60));
         const hours = Math.floor((seconds % (24 * 60 * 60)) / (60 * 60));
         const minutes = Math.floor((seconds % (60 * 60)) / 60);
+        const secs = Math.floor(seconds % 60);
         
         const parts = [];
         if (days > 0) parts.push(`${days}d`);
         if (hours > 0) parts.push(`${hours}h`);
         if (minutes > 0) parts.push(`${minutes}m`);
+        if (secs > 0 && parts.length === 0) parts.push(`${secs}s`);
         if (parts.length === 0) parts.push('Just started');
         
         return parts.join(' ');
@@ -65,16 +69,9 @@ const SystemVitals = () => {
     return (
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg p-6 transition-all duration-300 hover:shadow-xl border border-gray-200 dark:border-gray-700">
             <div className="flex justify-between items-start mb-4">
-                <div className="flex items-center space-x-3">
-                    <h2 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                        System Vitals
-                    </h2>
-                    {vitals && (
-                        <span className="text-xs font-medium px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300">
-                            {vitals.system.environment}
-                        </span>
-                    )}
-                </div>
+                <h2 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                    System Vitals
+                </h2>
                 <ServerIcon className="h-6 w-6 text-blue-600 dark:text-blue-400" />
             </div>
 
@@ -92,11 +89,19 @@ const SystemVitals = () => {
                             <SignalIcon className="h-5 w-5 text-green-500" />
                             <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Server Status</span>
                         </div>
-                        <div className="flex justify-between items-baseline">
-                            <span className="text-lg font-semibold text-green-500">Active</span>
-                            <span className="text-sm text-gray-500 dark:text-gray-400">
-                                Port {vitals.port}
-                            </span>
+                        <div className="flex flex-col space-y-1">
+                            <div className="flex justify-between items-baseline">
+                                <span className="text-lg font-semibold text-green-500">Active</span>
+                                <span className="text-sm text-gray-500 dark:text-gray-400">
+                                    {vitals.system.platform}
+                                </span>
+                            </div>
+                            <div className="flex justify-between items-baseline">
+                                <span className="text-sm text-gray-500 dark:text-gray-400">Uptime</span>
+                                <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                    {formatUptime(vitals.system.uptime)}
+                                </span>
+                            </div>
                         </div>
                     </div>
 
@@ -144,7 +149,7 @@ const SystemVitals = () => {
                         </div>
                     </div>
 
-                    {/* Uptime & Database */}
+                    {/* System Info */}
                     <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4">
                         <div className="flex items-center space-x-2 mb-2">
                             <ClockIcon className="h-5 w-5 text-orange-500" />
@@ -152,9 +157,9 @@ const SystemVitals = () => {
                         </div>
                         <div className="space-y-1">
                             <div className="flex justify-between">
-                                <span className="text-sm text-gray-500 dark:text-gray-400">Uptime</span>
+                                <span className="text-sm text-gray-500 dark:text-gray-400">Environment</span>
                                 <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    {formatUptime(vitals.uptime)}
+                                    {vitals.system.environment}
                                 </span>
                             </div>
                             <div className="flex justify-between">
@@ -164,9 +169,9 @@ const SystemVitals = () => {
                                 </span>
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-sm text-gray-500 dark:text-gray-400">Environment</span>
+                                <span className="text-sm text-gray-500 dark:text-gray-400">Version</span>
                                 <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                                    {vitals.environment}
+                                    {vitals.version || 'Unknown'}
                                 </span>
                             </div>
                         </div>
