@@ -6,26 +6,12 @@ class AuthController {
         try {
             const { username, password } = req.body;
             
-            const user = await User.findByUsername(username);
-            if (!user) {
+            const authResult = await User.authenticate(username, password);
+            if (!authResult) {
                 return res.status(401).json({ message: 'Invalid credentials' });
             }
 
-            const validUser = await User.validatePassword(username, password);
-            if (!validUser) {
-                return res.status(401).json({ message: 'Invalid credentials' });
-            }
-
-            const token = jwt.sign(
-                { 
-                    id: user.id, 
-                    username: user.username, 
-                    account_type: user.account_type,
-                    is_admin: user.is_admin
-                },
-                process.env.JWT_SECRET,
-                { expiresIn: '24h' }
-            );
+            const { user, token } = authResult;
 
             res.json({ 
                 token, 
