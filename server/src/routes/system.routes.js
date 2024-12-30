@@ -11,17 +11,28 @@ const executeScript = (scriptPath, args = []) => {
         console.log('Executing command:', command);
 
         exec(command, (error, stdout, stderr) => {
-            if (error) {
+            // Log all output for debugging
+            console.log('Script stdout:', stdout);
+            console.log('Script stderr:', stderr);
+            
+            // Don't treat stderr as an error if the command succeeded
+            if (error && error.code !== 0) {
                 console.error('Script execution error:', {
                     command,
                     error: error.message,
+                    code: error.code,
                     stderr,
                     stdout
                 });
                 reject({ command, error: error.message, stderr, stdout });
                 return;
             }
-            resolve(stdout.trim());
+            
+            // Return both stdout and stderr
+            resolve({
+                stdout: stdout.trim(),
+                stderr: stderr.trim()
+            });
         });
     });
 };
@@ -34,11 +45,26 @@ router.use(adminRequired);
 router.get('/updates/check', async (req, res) => {
     try {
         const scriptPath = path.resolve(__dirname, '../../../scripts/update.sh');
+        console.log('Executing update check script:', scriptPath);
+        
         const result = await executeScript(scriptPath, ['check']);
-        res.json({ updates_available: result.includes('Updates available') });
+        console.log('Update check result:', result);
+        
+        // The script returns "Updates available" or "No updates available"
+        const updatesAvailable = result.stdout.includes('Updates available');
+        
+        res.json({
+            status: 'success',
+            updates_available: updatesAvailable,
+            message: result.stdout
+        });
     } catch (error) {
         console.error('Update check error:', error);
-        res.status(500).json({ error: 'Failed to check for updates' });
+        res.status(500).json({
+            status: 'error',
+            error: 'Failed to check for updates',
+            details: error.message
+        });
     }
 });
 
@@ -46,11 +72,22 @@ router.get('/updates/check', async (req, res) => {
 router.get('/updates/details', async (req, res) => {
     try {
         const scriptPath = path.resolve(__dirname, '../../../scripts/update.sh');
+        console.log('Executing update details script:', scriptPath);
+        
         const result = await executeScript(scriptPath, ['details']);
-        res.json({ details: result });
+        console.log('Update details result:', result);
+        
+        res.json({
+            status: 'success',
+            details: result.stdout
+        });
     } catch (error) {
         console.error('Update details error:', error);
-        res.status(500).json({ error: 'Failed to get update details' });
+        res.status(500).json({
+            status: 'error',
+            error: 'Failed to get update details',
+            details: error.message
+        });
     }
 });
 
@@ -58,11 +95,23 @@ router.get('/updates/details', async (req, res) => {
 router.post('/updates/apply', async (req, res) => {
     try {
         const scriptPath = path.resolve(__dirname, '../../../scripts/update.sh');
+        console.log('Executing update apply script:', scriptPath);
+        
         const result = await executeScript(scriptPath, ['apply']);
-        res.json({ message: 'Updates applied successfully', details: result });
+        console.log('Update apply result:', result);
+        
+        res.json({
+            status: 'success',
+            message: 'Updates applied successfully',
+            details: result.stdout
+        });
     } catch (error) {
         console.error('Update application error:', error);
-        res.status(500).json({ error: 'Failed to apply updates' });
+        res.status(500).json({
+            status: 'error',
+            error: 'Failed to apply updates',
+            details: error.message
+        });
     }
 });
 
@@ -107,7 +156,8 @@ router.get('/vitals', async (req, res) => {
             system: {
                 platform: os.platform(),
                 release: os.release(),
-                uptime: uptime
+                uptime: uptime,
+                environment: process.env.NODE_ENV || 'development'
             },
             database: {
                 exists: dbExists,
