@@ -149,6 +149,70 @@ class User {
             throw error;
         }
     }
+
+    static async getUpcomingBirthdays(limit = 3) {
+        try {
+            const today = new Date();
+            const currentMonth = today.getMonth() + 1;
+            const currentDay = today.getDate();
+            
+            // Query both users and contacts with birthdays
+            const query = `
+                WITH combined_birthdays AS (
+                    -- Get user birthdays
+                    SELECT 
+                        id,
+                        username as name,
+                        date_of_birth,
+                        'user' as type,
+                        NULL as contact_type,
+                        CASE 
+                            WHEN strftime('%m-%d', date_of_birth) >= strftime('%m-%d', 'now')
+                            THEN strftime('%Y', 'now') - strftime('%Y', date_of_birth)
+                            ELSE strftime('%Y', 'now') - strftime('%Y', date_of_birth) + 1
+                        END as upcoming_age,
+                        CASE
+                            WHEN strftime('%m-%d', date_of_birth) < strftime('%m-%d', 'now')
+                            THEN julianday(strftime('%Y-', 'now', '+1 year') || strftime('%m-%d', date_of_birth)) - julianday('now')
+                            ELSE julianday(strftime('%Y-', 'now') || strftime('%m-%d', date_of_birth)) - julianday('now')
+                        END as days_until
+                    FROM users
+                    WHERE date_of_birth IS NOT NULL
+                    
+                    UNION ALL
+                    
+                    -- Get contact birthdays
+                    SELECT 
+                        id,
+                        first_name || ' ' || last_name as name,
+                        date_of_birth,
+                        'contact' as type,
+                        contact_type,
+                        CASE 
+                            WHEN strftime('%m-%d', date_of_birth) >= strftime('%m-%d', 'now')
+                            THEN strftime('%Y', 'now') - strftime('%Y', date_of_birth)
+                            ELSE strftime('%Y', 'now') - strftime('%Y', date_of_birth) + 1
+                        END as upcoming_age,
+                        CASE
+                            WHEN strftime('%m-%d', date_of_birth) < strftime('%m-%d', 'now')
+                            THEN julianday(strftime('%Y-', 'now', '+1 year') || strftime('%m-%d', date_of_birth)) - julianday('now')
+                            ELSE julianday(strftime('%Y-', 'now') || strftime('%m-%d', date_of_birth)) - julianday('now')
+                        END as days_until
+                    FROM contacts
+                    WHERE date_of_birth IS NOT NULL
+                )
+                SELECT *
+                FROM combined_birthdays
+                WHERE days_until >= 0
+                ORDER BY days_until ASC
+                LIMIT ?`;
+            
+            return await db.all(query, [limit]);
+        } catch (error) {
+            console.error('Error in getUpcomingBirthdays:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = User; 
