@@ -1,9 +1,22 @@
 const path = require('path');
+const fs = require('fs').promises;
 
-const DB_PATH = path.resolve(__dirname, '../../data/database.sqlite');
+// Get database path from environment or use default
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '../../data/database.sqlite');
 
-// Export the database configuration
+// Ensure data directory exists
+const ensureDataDirectory = async () => {
+    const dataDir = path.dirname(DB_PATH);
+    try {
+        await fs.access(dataDir);
+    } catch (error) {
+        if (error.code === 'ENOENT') {
+            await fs.mkdir(dataDir, { recursive: true });
+        }
+    }
+};
+
 module.exports = {
     DB_PATH,
-    DB_NAME: 'database.sqlite'
+    ensureDataDirectory
 }; 

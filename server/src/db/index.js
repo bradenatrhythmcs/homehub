@@ -1,110 +1,72 @@
-const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
+const sqlite3 = require('sqlite3');
 const { DB_PATH } = require('../config/database');
 
-// Ensure the data directory exists
-const fs = require('fs');
-const dataDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-}
+let db = null;
 
-console.log('Opening database at:', DB_PATH);
-
-const db = new sqlite3.Database(DB_PATH, (err) => {
-    if (err) {
-        console.error('Database connection error:', {
-            message: err.message,
-            stack: err.stack,
-            code: err.code,
-            errno: err.errno,
-            path: DB_PATH
-        });
-        process.exit(1);
-    }
-    console.log('Connected to database successfully');
-});
-
-// Enable foreign keys
-db.run('PRAGMA foreign_keys = ON');
-
-// Promisify database methods
-const dbRun = (sql, params = []) => {
+const initialize = () => {
     return new Promise((resolve, reject) => {
-        console.log('Executing SQL (run):', sql, 'with params:', params);
-        db.run(sql, params, function(err) {
+        db = new sqlite3.Database(DB_PATH, (err) => {
             if (err) {
-                console.error('Database run error:', {
-                    message: err.message,
-                    stack: err.stack,
-                    code: err.code,
-                    errno: err.errno,
-                    sql,
-                    params
-                });
+                console.error('Error opening database:', err);
                 reject(err);
-            } else {
-                resolve(this);
+                return;
             }
+            resolve();
         });
     });
 };
 
-const dbAll = (sql, params = []) => {
+const get = (query, params = []) => {
     return new Promise((resolve, reject) => {
-        console.log('Executing SQL (all):', sql, 'with params:', params);
-        db.all(sql, params, (err, rows) => {
+        if (!db) {
+            reject(new Error('Database not initialized'));
+            return;
+        }
+        db.get(query, params, (err, row) => {
             if (err) {
-                console.error('Database all error:', {
-                    message: err.message,
-                    stack: err.stack,
-                    code: err.code,
-                    errno: err.errno,
-                    sql,
-                    params
-                });
                 reject(err);
-            } else {
-                console.log('Query returned', rows?.length || 0, 'rows');
-                resolve(rows);
+                return;
             }
+            resolve(row);
         });
     });
 };
 
-const dbGet = (sql, params = []) => {
+const all = (query, params = []) => {
     return new Promise((resolve, reject) => {
-        console.log('Executing SQL (get):', sql, 'with params:', params);
-        db.get(sql, params, (err, row) => {
+        if (!db) {
+            reject(new Error('Database not initialized'));
+            return;
+        }
+        db.all(query, params, (err, rows) => {
             if (err) {
-                console.error('Database get error:', {
-                    message: err.message,
-                    stack: err.stack,
-                    code: err.code,
-                    errno: err.errno,
-                    sql,
-                    params
-                });
                 reject(err);
-            } else {
-                resolve(row);
+                return;
             }
+            resolve(rows);
         });
     });
 };
 
-// Handle database errors
-db.on('error', (err) => {
-    console.error('Database error event:', {
-        message: err.message,
-        stack: err.stack,
-        code: err.code,
-        errno: err.errno
+const run = (query, params = []) => {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject(new Error('Database not initialized'));
+            return;
+        }
+        db.run(query, params, function(err) {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve(this);
+        });
     });
-});
+};
 
 module.exports = {
-    run: dbRun,
-    all: dbAll,
-    get: dbGet
+    initialize,
+    get,
+    all,
+    run
 }; 

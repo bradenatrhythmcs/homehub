@@ -1,79 +1,76 @@
-const config = require('./config/config');
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const { initDatabase } = require('./models/database');
-const { errorHandler } = require('./middleware/error.middleware');
+const path = require('path');
+const { ensureDataDirectory, DB_PATH } = require('./config/database');
+const db = require('./db');
+const SystemSettings = require('./models/system.settings');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Middleware setup - ORDER IS IMPORTANT
-const corsOptions = {
-    origin: config.isDevelopment() 
-        ? ['http://localhost:5173', 'http://127.0.0.1:5173'] 
-        : config.clientUrl,
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-};
-
-app.use(cors(corsOptions));
-
-// Body parsing middleware MUST come before routes
+// Middleware
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(cors({
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    credentials: true
+}));
 
-// Rate limiting - separate limits for different types of routes
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: config.isProduction() ? 50 : 1000, // More lenient in development
-    message: 'Too many authentication attempts, please try again later'
-});
-
-const standardLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: config.isProduction() ? 100 : 1000, // More lenient in development
-    message: 'Too many requests, please try again later'
-});
-
-// Apply stricter rate limiting to auth routes
-app.use('/api/auth', authLimiter);
-
-// Apply standard rate limiting to all other routes
-app.use('/api', standardLimiter);
-
-// Development-only middleware
-if (config.isDevelopment()) {
-    const morgan = require('morgan');
-    app.use(morgan('dev'));
-}
-
-// Routes
-app.use('/api/auth', require('./routes/auth.routes'));
-app.use('/api/wifi', require('./routes/wifi.routes'));
-app.use('/api/users', require('./routes/user.routes'));
-app.use('/api/profile', require('./routes/profile.routes'));
-app.use('/api/admin', require('./routes/admin.routes'));
-app.use('/api/passwords', require('./routes/password.routes'));
-app.use('/api/bills', require('./routes/bill.routes'));
-app.use('/api/accounts', require('./routes/account.routes'));
-app.use('/api/contacts', require('./routes/contact.routes'));
-app.use('/api/system', require('./routes/system.routes'));
-
-// Error handling middleware (must be last)
-app.use(errorHandler);
-
-// Start server
-const startServer = async () => {
+// Initialize database and start server
+const initializeServer = async () => {
     try {
-        await initDatabase();
-        app.listen(config.port, () => {
-            console.log(`Server running in ${config.env} mode on port ${config.port}`);
+        // Ensure data directory exists
+        await ensureDataDirectory();
+        
+        console.log('Opening database at:', DB_PATH);
+        
+        // Initialize database connection
+        await db.initialize();
+        console.log('Connected to database successfully');
+        
+        // Initialize system settings
+        await SystemSettings.initialize();
+        console.log('System settings initialized');
+        
+        // Run migrations
+        await require('./db/migrate').migrate();
+        console.log('Database migration completed successfully');
+        
+        // Routes
+        app.use('/api/auth', require('./routes/auth.routes'));
+        app.use('/api/users', require('./routes/user.routes'));
+        app.use('/api/wifi', require('./routes/wifi.routes'));
+        app.use('/api/system', require('./routes/system.routes'));
+        app.use('/api/contacts', require('./routes/contact.routes'));
+        
+        // Serve static files in production
+        if (process.env.NODE_ENV === 'production') {
+            app.use(express.static(path.join(__dirname, '../../client/dist')));
+            app.get('*', (req, res) => {
+                res.sendFile(path.join(__dirname, '../../client/dist/index.html'));
+            });
+        }
+        
+        // Start server
+        app.listen(PORT, () => {
+            console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
         });
     } catch (error) {
-        console.error('Failed to start server:', error);
+        console.error('Failed to initialize server:', error);
         process.exit(1);
     }
 };
 
-startServer(); 
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (error) => {
+    console.error('Unhandled Rejection:', error);
+    process.exit(1);
+});
+
+// Start the server
+initializeServer(); 

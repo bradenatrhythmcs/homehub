@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "description": "HomeHub server - WiFi information sharing and user management system",
   "main": "src/index.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
@@ -15,6 +20,7 @@
     "migrate:wifi-networks": "node src/db/migrations/add_wifi_networks.js"
   },
   "dependencies": {
+    "@octokit/rest": "18.12.0",
     "bcrypt": "^5.1.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
@@ -30,5 +36,21 @@
   "devDependencies": {
     "jest": "^29.7.0",
     "nodemon": "^3.0.2"
-  }
+  },
+  "optionalDependencies": {
+    "fsevents": "^2.3.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bradenatrhythmcs/homehub.git"
+  },
+  "keywords": [
+    "home-automation",
+    "wifi-management",
+    "raspberry-pi",
+    "system-monitoring",
+    "contact-management"
+  ],
+  "author": "Braden Atwood",
+  "license": "MIT"
 }

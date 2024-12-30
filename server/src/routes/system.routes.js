@@ -5,6 +5,8 @@ const path = require('path');
 const { authenticateToken, adminRequired } = require('../middleware/auth');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
+const SystemSettings = require('../models/system.settings');
+const { Octokit } = require('@octokit/rest').Octokit;
 
 // Track server start time
 const SERVER_START_TIME = Date.now();
@@ -16,11 +18,9 @@ const executeScript = (scriptPath, args = []) => {
         console.log('Executing command:', command);
 
         exec(command, (error, stdout, stderr) => {
-            // Log all output for debugging
             console.log('Script stdout:', stdout);
             console.log('Script stderr:', stderr);
             
-            // Don't treat stderr as an error if the command succeeded
             if (error && error.code !== 0) {
                 console.error('Script execution error:', {
                     command,
@@ -33,7 +33,6 @@ const executeScript = (scriptPath, args = []) => {
                 return;
             }
             
-            // Return both stdout and stderr
             resolve({
                 stdout: stdout.trim(),
                 stderr: stderr.trim()
@@ -53,85 +52,60 @@ const getGitVersion = async () => {
     }
 };
 
-// Apply authentication and admin check to all routes
-router.use(authenticateToken);
-router.use(adminRequired);
-
-// Check for updates
-router.get('/updates/check', async (req, res) => {
+// Check for updates using GitHub API
+const checkForUpdates = async () => {
     try {
-        const scriptPath = path.resolve(__dirname, '../../../scripts/update.sh');
-        console.log('Executing update check script:', scriptPath);
-        
-        const result = await executeScript(scriptPath, ['check']);
-        console.log('Update check result:', result);
-        
-        // The script returns "Updates available" or "No updates available"
-        const updatesAvailable = result.stdout.includes('Updates available');
-        
-        res.json({
-            status: 'success',
-            updates_available: updatesAvailable,
-            message: result.stdout
-        });
-    } catch (error) {
-        console.error('Update check error:', error);
-        res.status(500).json({
-            status: 'error',
-            error: 'Failed to check for updates',
-            details: error.message
-        });
-    }
-});
+        const token = await SystemSettings.getGitHubToken();
+        if (!token) {
+            return { 
+                hasUpdate: false, 
+                error: 'GitHub token not configured',
+                currentVersion: await getGitVersion()
+            };
+        }
 
-// Get update details
-router.get('/updates/details', async (req, res) => {
+        const octokit = new Octokit({ auth: token });
+        const [owner, repo] = process.env.GITHUB_REPO.split('/');
+        
+        // Get latest release
+        const { data: latestRelease } = await octokit.repos.getLatestRelease({
+            owner,
+            repo
+        });
+
+        const currentVersion = await getGitVersion();
+        const hasUpdate = latestRelease.tag_name !== currentVersion;
+
+        return {
+            hasUpdate,
+            currentVersion,
+            latestVersion: latestRelease.tag_name,
+            releaseNotes: latestRelease.body,
+            releaseUrl: latestRelease.html_url
+        };
+    } catch (error) {
+        console.error('Error checking for updates:', error);
+        return {
+            hasUpdate: false,
+            error: error.message,
+            currentVersion: await getGitVersion()
+        };
+    }
+};
+
+// Apply system update
+const applyUpdate = async () => {
     try {
-        const scriptPath = path.resolve(__dirname, '../../../scripts/update.sh');
-        console.log('Executing update details script:', scriptPath);
-        
-        const result = await executeScript(scriptPath, ['details']);
-        console.log('Update details result:', result);
-        
-        res.json({
-            status: 'success',
-            details: result.stdout
-        });
+        const updateScript = path.join(__dirname, '../../scripts/update.sh');
+        const result = await executeScript(updateScript);
+        return { success: true, ...result };
     } catch (error) {
-        console.error('Update details error:', error);
-        res.status(500).json({
-            status: 'error',
-            error: 'Failed to get update details',
-            details: error.message
-        });
+        console.error('Error applying update:', error);
+        return { success: false, error: error.message };
     }
-});
+};
 
-// Apply updates
-router.post('/updates/apply', async (req, res) => {
-    try {
-        const scriptPath = path.resolve(__dirname, '../../../scripts/update.sh');
-        console.log('Executing update apply script:', scriptPath);
-        
-        const result = await executeScript(scriptPath, ['apply']);
-        console.log('Update apply result:', result);
-        
-        res.json({
-            status: 'success',
-            message: 'Updates applied successfully',
-            details: result.stdout
-        });
-    } catch (error) {
-        console.error('Update application error:', error);
-        res.status(500).json({
-            status: 'error',
-            error: 'Failed to apply updates',
-            details: error.message
-        });
-    }
-});
-
-// Get system vitals
+// Get system vitals (public endpoint)
 router.get('/vitals', async (req, res) => {
     try {
         const os = require('os');
@@ -151,28 +125,25 @@ router.get('/vitals', async (req, res) => {
 
         // Get git version
         const version = await getGitVersion();
-
-        // Calculate CPU load
-        const cpus = os.cpus();
-        const loadAvg = os.loadavg();
-        const totalMem = os.totalmem();
-        const freeMem = os.freemem();
         
         // Calculate server uptime in seconds
         const uptime = Math.floor((Date.now() - SERVER_START_TIME) / 1000);
 
+        // Get update status
+        const updateStatus = await checkForUpdates();
+
         res.json({
             cpu: {
-                cores: cpus.length,
-                model: cpus[0].model,
-                speed: cpus[0].speed,
-                load: loadAvg[0]
+                cores: os.cpus().length,
+                model: os.cpus()[0].model,
+                speed: os.cpus()[0].speed,
+                load: os.loadavg()[0]
             },
             memory: {
-                total: totalMem,
-                free: freeMem,
-                used: totalMem - freeMem,
-                usage: ((totalMem - freeMem) / totalMem * 100).toFixed(2)
+                total: os.totalmem(),
+                free: os.freemem(),
+                used: os.totalmem() - os.freemem(),
+                usage: ((os.totalmem() - os.freemem()) / os.totalmem() * 100).toFixed(2)
             },
             system: {
                 platform: os.platform(),
@@ -185,11 +156,60 @@ router.get('/vitals', async (req, res) => {
                 size: dbSize,
                 path: dbPath
             },
-            version: version
+            version: version,
+            update: updateStatus
         });
     } catch (error) {
         console.error('Error getting system vitals:', error);
         res.status(500).json({ error: 'Failed to get system vitals' });
+    }
+});
+
+// Apply authentication and admin check for sensitive operations
+router.use(authenticateToken);
+router.use(adminRequired);
+
+// Configure GitHub token
+router.post('/github/token', async (req, res) => {
+    try {
+        const { token } = req.body;
+        if (!token) {
+            return res.status(400).json({ error: 'Token is required' });
+        }
+
+        // Verify token works by making a test API call
+        const octokit = new Octokit({ auth: token });
+        const [owner, repo] = process.env.GITHUB_REPO.split('/');
+        await octokit.repos.get({ owner, repo });
+
+        // Save token if verification successful
+        await SystemSettings.setGitHubToken(token);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('Error configuring GitHub token:', error);
+        res.status(400).json({ error: 'Invalid GitHub token' });
+    }
+});
+
+// Check for updates
+router.get('/updates/check', async (req, res) => {
+    try {
+        const updateStatus = await checkForUpdates();
+        res.json(updateStatus);
+    } catch (error) {
+        console.error('Error checking for updates:', error);
+        res.status(500).json({ error: 'Failed to check for updates' });
+    }
+});
+
+// Apply update
+router.post('/updates/apply', async (req, res) => {
+    try {
+        const result = await applyUpdate();
+        res.json(result);
+    } catch (error) {
+        console.error('Error applying update:', error);
+        res.status(500).json({ error: 'Failed to apply update' });
     }
 });
 

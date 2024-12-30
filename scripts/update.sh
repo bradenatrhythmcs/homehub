@@ -1,157 +1,180 @@
 #!/bin/bash
 
 # Configuration
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKUP_DIR="$APP_DIR/backups"
-REMOTE_URL="origin"
-BRANCH="main"
-UPDATE_LOG="$APP_DIR/logs/update.log"
+APP_NAME="homehub"
+APP_DIR="/opt/$APP_NAME"
+SERVICE_NAME="$APP_NAME.service"
+DATA_DIR="/var/lib/$APP_NAME"
+LOG_DIR="/var/log/$APP_NAME"
+DB_FILE="$DATA_DIR/database.sqlite"
+BACKUP_DIR="$DATA_DIR/backups"
 
-# Ensure logs directory exists
-mkdir -p "$(dirname "$UPDATE_LOG")"
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
 
-# Logging function
+# Detect platform
+PLATFORM=$(uname)
+IS_RASPBERRY_PI=false
+if [ -f "/etc/rpi-issue" ] || [ -f "/proc/device-tree/model" ] && grep -q "Raspberry Pi" "/proc/device-tree/model"; then
+    IS_RASPBERRY_PI=true
+fi
+
+# Logging functions
 log() {
-    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    echo "[$timestamp] $1" | tee -a "$UPDATE_LOG"
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
 }
 
-# Check if we're in a git repository
-check_git() {
-    if ! git rev-parse --git-dir > /dev/null 2>&1; then
-        log "Error: Not a git repository"
-        exit 1
-    fi
+error() {
+    echo -e "${RED}[$(date +'%Y-%m-%d %H:%M:%S')] ERROR: $1${NC}" >&2
 }
 
-# Check for updates
-check_updates() {
-    cd "$APP_DIR" || exit 1
-    check_git
+warn() {
+    echo -e "${YELLOW}[$(date +'%Y-%m-%d %H:%M:%S')] WARNING: $1${NC}"
+}
 
-    git fetch "$REMOTE_URL" "$BRANCH"
-    local behind=$(git rev-list HEAD.."$REMOTE_URL/$BRANCH" --count)
+# Check if running as root for production
+if [ "$IS_RASPBERRY_PI" = true ] && [ "$EUID" -ne 0 ]; then
+    error "Please run as root when updating production environment"
+    exit 1
+fi
+
+# Create backup before update
+create_backup() {
+    log "Creating backup before update..."
     
-    if [ "$behind" -gt 0 ]; then
-        log "Updates available"
-        echo "Updates available"
-        return 0
-    else
-        log "No updates available"
-        echo "No updates available"
-        return 1
-    fi
-}
-
-# Get update details
-get_update_details() {
-    cd "$APP_DIR" || exit 1
-    check_git
-
-    git fetch "$REMOTE_URL" "$BRANCH"
-    local current_version=$(git rev-parse --short HEAD)
-    local latest_version=$(git rev-parse --short "$REMOTE_URL/$BRANCH")
-    local latest_message=$(git log -1 --format=%s "$REMOTE_URL/$BRANCH")
-    local changes=$(git log HEAD.."$REMOTE_URL/$BRANCH" --oneline)
-
-    echo "Current version: $current_version"
-    echo "Latest version: $latest_version"
-    echo "Latest commit: $latest_message"
-    echo "Changes:"
-    echo "$changes"
-}
-
-# Backup current state
-backup() {
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_file="$BACKUP_DIR/backup_$timestamp.tar.gz"
-    
+    # Ensure backup directory exists
     mkdir -p "$BACKUP_DIR"
-    tar -czf "$backup_file" -C "$APP_DIR" .
+    chown node:node "$BACKUP_DIR"
     
-    if [ $? -eq 0 ]; then
-        log "Backup created: $backup_file"
-        echo "$backup_file"
+    # Create backup filename with timestamp
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    DB_BACKUP="$BACKUP_DIR/database_$TIMESTAMP.sqlite"
+    CONFIG_BACKUP="$BACKUP_DIR/config_$TIMESTAMP.tar.gz"
+    
+    # Backup database
+    if [ -f "$DB_FILE" ]; then
+        log "Backing up database..."
+        sudo -u node cp "$DB_FILE" "$DB_BACKUP"
+        sudo -u node sqlite3 "$DB_BACKUP" "VACUUM;"
     else
-        log "Error: Backup failed"
-        exit 1
+        warn "No database found to backup"
+    fi
+    
+    # Backup configuration
+    log "Backing up configuration..."
+    sudo -u node tar -czf "$CONFIG_BACKUP" -C "$APP_DIR/server" .env.production
+    
+    # Clean up old backups (keep last 7 days)
+    find "$BACKUP_DIR" -name "database_*.sqlite" -mtime +7 -delete
+    find "$BACKUP_DIR" -name "config_*.tar.gz" -mtime +7 -delete
+}
+
+# Stop service in production
+stop_service() {
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        log "Stopping HomeHub service..."
+        systemctl stop "$SERVICE_NAME"
+    fi
+}
+
+# Start service in production
+start_service() {
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        log "Starting HomeHub service..."
+        systemctl start "$SERVICE_NAME"
     fi
 }
 
 # Update dependencies
-update_deps() {
-    cd "$APP_DIR" || exit 1
-    
-    log "Updating server dependencies..."
-    cd server && npm install
-    
-    log "Updating client dependencies..."
-    cd ../client && npm install
-}
-
-# Rebuild application
-rebuild() {
-    cd "$APP_DIR" || exit 1
-    
-    log "Building client..."
-    cd client && npm run build
-    
-    if [ $? -ne 0 ]; then
-        log "Error: Client build failed"
-        return 1
+update_dependencies() {
+    log "Updating dependencies..."
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        cd "$APP_DIR/server" && npm ci --production
+        cd "$APP_DIR/client" && npm ci && npm run build
+    else
+        cd server && npm install
+        cd ../client && npm install
     fi
-    
-    return 0
 }
 
-# Perform update
-apply_update() {
-    cd "$APP_DIR" || exit 1
-    check_git
+# Apply database migrations
+apply_migrations() {
+    log "Checking for database migrations..."
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        cd "$APP_DIR/server"
+        
+        # Run migrations as node user
+        sudo -u node NODE_ENV=production node src/db/migrate.js
+        
+        # Verify database integrity
+        if ! sqlite3 "$DB_FILE" "PRAGMA integrity_check;" | grep -q "ok"; then
+            error "Database integrity check failed after migration"
+            return 1
+        fi
+    else
+        cd server
+        NODE_ENV=development node src/db/migrate.js
+    fi
+}
 
+# Main update process
+main() {
     log "Starting update process..."
     
-    # Create backup
-    local backup_file=$(backup)
-    log "Created backup: $backup_file"
+    # Check disk space
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        AVAILABLE_SPACE=$(df -k "$APP_DIR" | awk 'NR==2 {print $4}')
+        REQUIRED_SPACE=500000  # 500MB in KB
+        
+        if [ "$AVAILABLE_SPACE" -lt "$REQUIRED_SPACE" ]; then
+            error "Insufficient disk space. Required: 500MB, Available: $((AVAILABLE_SPACE/1024))MB"
+            exit 1
+        fi
+    fi
     
-    # Pull changes
-    if ! git pull "$REMOTE_URL" "$BRANCH"; then
-        log "Error: Failed to pull updates"
-        return 1
+    # Create backup
+    create_backup
+    
+    # Stop service in production
+    stop_service
+    
+    # Pull latest changes
+    log "Pulling latest changes..."
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        cd "$APP_DIR"
+        sudo -u node git fetch origin
+        sudo -u node git reset --hard origin/main
+    else
+        git fetch origin
+        git reset --hard origin/main
     fi
     
     # Update dependencies
-    if ! update_deps; then
-        log "Error: Failed to update dependencies"
-        git reset --hard HEAD@{1}
-        return 1
+    update_dependencies
+    
+    # Apply migrations
+    if ! apply_migrations; then
+        error "Migration failed, attempting to restore from backup..."
+        # TODO: Implement backup restoration
+        exit 1
     fi
     
-    # Rebuild application
-    if ! rebuild; then
-        log "Error: Failed to rebuild application"
-        git reset --hard HEAD@{1}
-        return 1
-    fi
+    # Start service in production
+    start_service
     
-    log "Update completed successfully"
-    return 0
+    log "Update completed successfully!"
+    
+    # Print locations
+    if [ "$IS_RASPBERRY_PI" = true ]; then
+        log "Database location: $DB_FILE"
+        log "Backup location: $BACKUP_DIR"
+        log "Log location: $LOG_DIR"
+        log "You can check the service status with: systemctl status $SERVICE_NAME"
+    fi
 }
 
-# Main execution
-case "$1" in
-    "check")
-        check_updates
-        ;;
-    "details")
-        get_update_details
-        ;;
-    "apply")
-        apply_update
-        ;;
-    *)
-        echo "Usage: $0 {check|details|apply}"
-        exit 1
-        ;;
-esac 
+# Run main update process
+main 
